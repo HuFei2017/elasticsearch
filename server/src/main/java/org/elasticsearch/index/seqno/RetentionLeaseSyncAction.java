@@ -26,6 +26,7 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.ActionFilters;
+import org.elasticsearch.action.support.ActiveShardCount;
 import org.elasticsearch.action.support.WriteResponse;
 import org.elasticsearch.action.support.replication.ReplicatedWriteRequest;
 import org.elasticsearch.action.support.replication.ReplicationResponse;
@@ -87,7 +88,7 @@ public class RetentionLeaseSyncAction extends
                 indexNameExpressionResolver,
                 RetentionLeaseSyncAction.Request::new,
                 RetentionLeaseSyncAction.Request::new,
-                ThreadPool.Names.MANAGEMENT);
+                ThreadPool.Names.MANAGEMENT, false);
     }
 
     /**
@@ -122,13 +123,15 @@ public class RetentionLeaseSyncAction extends
     }
 
     @Override
-    protected WritePrimaryResult<Request, Response> shardOperationOnPrimary(
-            final Request request,
-            final IndexShard primary) throws WriteStateException {
-        Objects.requireNonNull(request);
-        Objects.requireNonNull(primary);
-        primary.persistRetentionLeases();
-        return new WritePrimaryResult<>(request, new Response(), null, null, primary, getLogger());
+    protected void shardOperationOnPrimary(Request request, IndexShard primary,
+            ActionListener<PrimaryResult<Request, Response>> listener) {
+        ActionListener.completeWith(listener, () -> {
+            assert request.waitForActiveShards().equals(ActiveShardCount.NONE) : request.waitForActiveShards();
+            Objects.requireNonNull(request);
+            Objects.requireNonNull(primary);
+            primary.persistRetentionLeases();
+            return new WritePrimaryResult<>(request, new Response(), null, null, primary, getLogger());
+        });
     }
 
     @Override
@@ -155,19 +158,20 @@ public class RetentionLeaseSyncAction extends
             return retentionLeases;
         }
 
-        public Request() {
-
+        public Request(StreamInput in) throws IOException {
+            super(in);
+            retentionLeases = new RetentionLeases(in);
         }
 
         public Request(final ShardId shardId, final RetentionLeases retentionLeases) {
             super(Objects.requireNonNull(shardId));
             this.retentionLeases = Objects.requireNonNull(retentionLeases);
+            waitForActiveShards(ActiveShardCount.NONE);
         }
 
         @Override
-        public void readFrom(final StreamInput in) throws IOException {
-            super.readFrom(in);
-            retentionLeases = new RetentionLeases(in);
+        public void readFrom(final StreamInput in) {
+            throw new UnsupportedOperationException("usage of Streamable is to be replaced by Writeable");
         }
 
         @Override
